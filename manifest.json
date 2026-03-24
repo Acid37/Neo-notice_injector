@@ -1,0 +1,28 @@
+{
+  "name": "notice_injector",
+  "version": "1.0.0",
+  "description": "处理QQ通知消息（如戳一戳、表情回复等），并支持主动发送QQ交互消息",
+  "author": "可acid",
+  "dependencies": {
+    "plugins": [],
+    "components": []
+  },
+  "include": [
+    {
+      "component_type": "action",
+      "component_name": "send_poke",
+      "dependencies": [],
+      "enabled": true
+    },
+    {
+      "component_type": "action",
+      "component_name": "send_emoji_like",
+      "dependencies": [],
+      "enabled": true
+    }
+  ],
+  "entry_point": "plugin.py",
+  "min_core_version": "1.0.0",
+  "python_dependencies": [],
+  "dependencies_required": true
+}
