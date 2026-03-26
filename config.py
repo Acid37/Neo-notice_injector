@@ -25,6 +25,10 @@ class NoticeInjectorConfig(BaseConfig):
         enable_debug: bool = Field(default=False, description="是否输出调试日志；建议仅在排障时开启。")
         ignore_self_notice: bool = Field(default=True, description="是否忽略机器人自身触发的通知，避免自循环。")
         trigger_chat: bool = Field(default=False, description="是否将通知注入对话流触发聊天。false 可减少 token 与上下文污染。")
+        # 表情回复配置
+        default_emoji_id: str = Field(default="126", description="发送表情回复时的默认表情ID（未指定时使用）。126=点赞，具体ID可参考 QQ 表情列表。")
+        # 适配器配置
+        adapter_sign: str = Field(default="napcat_adapter:adapter:napcat_adapter", description="适配器签名，用于发送戳一戳和表情回复命令。默认值适用于 NapCat 适配器。")
         # 戳一戳连击限制
         max_poke_count: int = Field(default=3, description="单次动作最大连戳次数。建议 1~3；运行时会被强制限制在 [1, 10]。")
         poke_interval_min_ms: int = Field(default=100, description="连戳最小间隔（毫秒）。与 max 组成随机区间，降低风控概率。")

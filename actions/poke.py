@@ -111,12 +111,13 @@ class SendPokeAction(BaseAction):
                 requested_count = 1
             actual_count = min(max(requested_count, 1), effective_max)
 
-            # 0.1 读取连续执行间隔（毫秒）并归一化
+            # 0.1 读取连续执行间隔（毫秒）、目标校验开关及适配器签名并归一化
             interval_min_ms = 100
             interval_max_ms = 200
             validate_target_before_poke = False
             validate_target_in_group = True
-            validate_target_in_private = True
+            validate_target_in_private = False
+            adapter_sign = "napcat_adapter:adapter:napcat_adapter"
             if plugin_config is not None:
                 try:
                     interval_min_ms = int(getattr(plugin_config, "poke_interval_min_ms", 100) or 0)
@@ -133,8 +134,11 @@ class SendPokeAction(BaseAction):
                     getattr(plugin_config, "validate_target_in_group", True)
                 )
                 validate_target_in_private = bool(
-                    getattr(plugin_config, "validate_target_in_private", True)
+                    getattr(plugin_config, "validate_target_in_private", False)
                 )
+                _sign = getattr(plugin_config, "adapter_sign", None)
+                if _sign and str(_sign).strip():
+                    adapter_sign = str(_sign).strip()
 
             interval_min_ms = max(0, interval_min_ms)
             interval_max_ms = max(0, interval_max_ms)
@@ -198,7 +202,7 @@ class SendPokeAction(BaseAction):
 
                 if should_validate and effective_group_id:
                     verify_result = await adapter_manager.send_adapter_command(
-                        adapter_sign="napcat_adapter:adapter:napcat_adapter",
+                        adapter_sign=adapter_sign,
                         command_name="get_group_member_info",
                         command_data={
                             "group_id": effective_group_id,
@@ -209,7 +213,7 @@ class SendPokeAction(BaseAction):
                     )
                 elif should_validate:
                     verify_result = await adapter_manager.send_adapter_command(
-                        adapter_sign="napcat_adapter:adapter:napcat_adapter",
+                        adapter_sign=adapter_sign,
                         command_name="get_stranger_info",
                         command_data={"user_id": effective_user_id},
                         timeout=10.0,
@@ -227,7 +231,7 @@ class SendPokeAction(BaseAction):
             # 发送戳一戳命令到 napcat 适配器（支持连续次数）
             for i in range(actual_count):
                 result = await adapter_manager.send_adapter_command(
-                    adapter_sign="napcat_adapter:adapter:napcat_adapter",
+                    adapter_sign=adapter_sign,
                     command_name=command_name,
                     command_data=command_data,
                     timeout=10.0
@@ -256,7 +260,7 @@ class SendPokeAction(BaseAction):
 
             logger.info(f"已连续戳了用户 {effective_user_id} {actual_count} 次")
             return True, f"已连续戳了用户 {effective_user_id} {actual_count} 次"
-                
+
         except Exception as e:
             logger.error(f"发送戳一戳时发生异常: {e}", exc_info=True)
             return False, f"发送戳一戳时发生异常: {str(e)}"

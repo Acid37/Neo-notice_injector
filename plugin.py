@@ -65,7 +65,25 @@ class NoticeInjectorEventHandler(BaseEventHandler):
         extra = msg_info.get("extra", {})
         notice_type = extra.get("notice_type", "")
         text_description = extra.get("text_description", "")
-        
+
+        # 对 group_msg_emoji_like 类型尝试提取更丰富的描述
+        if notice_type == "group_msg_emoji_like" and not text_description:
+            # 尝试从 emoji_list 中构建描述
+            emoji_list = extra.get("emoji_list", [])
+            if emoji_list:
+                emoji_id = str(emoji_list[0].get("emoji_id", "")) if emoji_list else ""
+                count = emoji_list[0].get("count", 1) if emoji_list else 1
+                from_user = msg_info.get("from_user", {})
+                sender_nick = from_user.get("nickname", "") or from_user.get("user_id", "某人")
+                msg_id = msg_info.get("message_id", "")
+                text_description = (
+                    f"{sender_nick} 对消息{(' ' + str(msg_id)) if msg_id else ''}"
+                    f" 发送了表情回复（表情ID: {emoji_id}，数量: {count}）"
+                )
+                extra["text_description"] = text_description
+                if config.plugin.enable_debug:
+                    logger.debug(f"构建表情回复描述: {text_description}")
+
         # 如果没有 text_description，无法处理，直接返回
         if not text_description:
             return EventDecision.SUCCESS, params
@@ -130,9 +148,6 @@ class NoticeInjectorEventHandler(BaseEventHandler):
             "ephemeral": True  # 建议的核心层协议：标记为瞬态消息，不持久化到数据库
         })
         msg_info["extra"] = current_extra
-
-        if config.plugin.enable_debug:
-            logger.info(f"NoticeInjector 注入上下文: {current_extra} | 文本: {text_description}")
         
         return EventDecision.SUCCESS, params
 
@@ -176,7 +191,7 @@ class NoticeInjectorPlugin(BasePlugin):
     """NoticeInjector 插件主类"""
 
     plugin_name = "notice_injector"
-    plugin_version = "0.1.0"
+    plugin_version = "1.1.0"
     plugin_author = "NeoFox"
     plugin_description = "将 QQ 通知消息（如戳一戳、表情回复等）转换为标准文本消息。"
     configs = [NoticeInjectorConfig]

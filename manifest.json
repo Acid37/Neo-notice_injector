@@ -1,8 +1,8 @@
 {
   "name": "notice_injector",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "处理QQ通知消息（如戳一戳、表情回复等），并支持主动发送QQ交互消息",
-  "author": "可acid",
+  "author": "可acid,绝世猫猫满月月喵（彩蛋喵）",
   "dependencies": {
     "plugins": [],
     "components": []
