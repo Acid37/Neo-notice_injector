@@ -264,3 +264,160 @@ class SendPokeAction(BaseAction):
         except Exception as e:
             logger.error(f"发送戳一戳时发生异常: {e}", exc_info=True)
             return False, f"发送戳一戳时发生异常: {str(e)}"
+
+
+class SendPokeMultipleAction(BaseAction):
+    """AOE 戳一戳动作给多个用户"""
+
+    action_name = "send_poke_multiple"
+    action_description = (
+        "戳多个参与互动的用户（仅群聊）。"
+        "与 send_poke 为互斥关系，请根据场景选择："
+        "- send_poke：单用户连戳多次"
+        "- send_poke_multiple：多用户各戳一次"
+        "参数说明："
+        "- user_ids: 目标用户ID列表（必填）。建议从上下文最近有互动的用户中选择。"
+        "- group_id: 群号（必填），必须是数字ID，不能传群名。"
+        "- max_targets: 最大目标人数上限，默认5。"
+        "- validate_targets: 是否校验目标用户存在，默认true。"
+        "注意：每人只戳一次，不支持连戳。"
+    )
+
+    async def execute(
+        self,
+        user_ids: list[str],
+        group_id: str,
+        max_targets: int = 5,
+        validate_targets: bool = True,
+    ) -> tuple[bool, str]:
+        """执行 AOE 戳一戳动作
+
+        Args:
+            user_ids: 目标用户ID列表
+            group_id: 群号
+            max_targets: 最大目标人数上限
+            validate_targets: 是否校验目标用户存在
+        """
+        try:
+            # 参数预处理
+            if not user_ids:
+                return False, "目标用户列表为空"
+
+            # 限制人数
+            if len(user_ids) > max_targets:
+                logger.warning(f"AOE戳一戳目标人数 {len(user_ids)} 超过上限 {max_targets}，已截断")
+                user_ids = user_ids[:max_targets]
+
+            # 归一化 group_id
+            normalized_group_id = SendPokeAction._normalize_numeric_id(group_id)
+            if not normalized_group_id:
+                return False, f"无效的群号: {group_id}"
+
+            # 读取适配器配置
+            adapter_sign = "napcat_adapter:adapter:napcat_adapter"
+            interval_min_ms = 100
+            interval_max_ms = 200
+            plugin_obj = getattr(self, "plugin", None)
+            config_obj = getattr(plugin_obj, "config", None)
+            plugin_config = getattr(config_obj, "plugin", None)
+            if plugin_config is not None:
+                _sign = getattr(plugin_config, "adapter_sign", None)
+                if _sign and str(_sign).strip():
+                    adapter_sign = str(_sign).strip()
+                try:
+                    interval_min_ms = int(getattr(plugin_config, "poke_interval_min_ms", 100) or 0)
+                    interval_max_ms = int(getattr(plugin_config, "poke_interval_max_ms", 200) or 0)
+                except (TypeError, ValueError):
+                    pass
+
+            interval_min_ms = max(0, interval_min_ms)
+            interval_max_ms = max(0, interval_max_ms)
+            if interval_min_ms > interval_max_ms:
+                interval_min_ms, interval_max_ms = interval_max_ms, interval_min_ms
+
+            from src.core.managers.adapter_manager import get_adapter_manager
+            adapter_manager = get_adapter_manager()
+
+            # 校验目标用户（可选）
+            valid_user_ids: list[str] = []
+            invalid_users: list[tuple[str, str]] = []
+
+            if validate_targets:
+                for uid in user_ids:
+                    normalized_uid = SendPokeAction._normalize_numeric_id(uid)
+                    if not normalized_uid:
+                        invalid_users.append((uid, "无效ID格式"))
+                        continue
+
+                    result = await adapter_manager.send_adapter_command(
+                        adapter_sign=adapter_sign,
+                        command_name="get_group_member_info",
+                        command_data={
+                            "group_id": normalized_group_id,
+                            "user_id": normalized_uid,
+                            "no_cache": True,
+                        },
+                        timeout=10.0,
+                    )
+
+                    if result.get("status") == "ok":
+                        valid_user_ids.append(normalized_uid)
+                    else:
+                        error = result.get("message", "未知错误")
+                        invalid_users.append((uid, error))
+
+                if not valid_user_ids:
+                    error_detail = "; ".join([f"{uid}({err})" for uid, err in invalid_users])
+                    return False, f"所有目标用户校验失败: {error_detail}"
+            else:
+                valid_user_ids = [
+                    uid for uid in user_ids
+                    if SendPokeAction._normalize_numeric_id(uid)
+                ]
+                if not valid_user_ids:
+                    return False, "目标用户列表中无有效ID"
+
+            # 执行 AOE 戳一戳
+            success_users: list[str] = []
+            failed_users: list[tuple[str, str]] = []
+
+            for i, uid in enumerate(valid_user_ids):
+                result = await adapter_manager.send_adapter_command(
+                    adapter_sign=adapter_sign,
+                    command_name="group_poke",
+                    command_data={
+                        "group_id": normalized_group_id,
+                        "user_id": uid,
+                    },
+                    timeout=10.0,
+                )
+
+                if result.get("status") == "ok":
+                    success_users.append(uid)
+                else:
+                    error = result.get("message", "未知错误")
+                    failed_users.append((uid, error))
+
+                # 间隔延迟，降低风控
+                if i < len(valid_user_ids) - 1:
+                    interval_ms = random.randint(interval_min_ms, interval_max_ms)
+                    await asyncio.sleep(interval_ms / 1000.0)
+
+            # 汇总结果
+            if success_users:
+                success_msg = f"成功戳了 {len(success_users)} 人: {', '.join(success_users)}"
+                if failed_users:
+                    fail_msg = f"，失败 {len(failed_users)} 人: {', '.join([f'{u}({e})' for u, e in failed_users])}"
+                    logger.info(f"AOE戳一戳结果: {success_msg}{fail_msg}")
+                    return True, success_msg + fail_msg
+                else:
+                    if invalid_users:
+                        success_msg += f"（另有 {len(invalid_users)} 人因校验失败跳过）"
+                    logger.info(f"AOE戳一戳完成: {success_msg}")
+                    return True, success_msg
+            else:
+                return False, f"AOE戳一戳全部失败: {', '.join([f'{u}({e})' for u, e in failed_users])}"
+
+        except Exception as e:
+            logger.error(f"AOE戳一戳时发生异常: {e}", exc_info=True)
+            return False, f"AOE戳一戳时发生异常: {str(e)}"

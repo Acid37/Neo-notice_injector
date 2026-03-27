@@ -12,7 +12,7 @@ from src.core.components.types import EventType
 from src.kernel.event import EventDecision
 
 from .config import NoticeInjectorConfig
-from .actions.poke import SendPokeAction
+from .actions.poke import SendPokeAction, SendPokeMultipleAction
 from .actions.emoji_like import SendEmojiLikeAction
 
 logger = get_logger("notice_injector")
@@ -210,6 +210,7 @@ class NoticeInjectorPlugin(BasePlugin):
         """获取插件内所有组件类"""
         return [
             SendPokeAction,
+            SendPokeMultipleAction,
             SendEmojiLikeAction,
             NoticeInjectorEventHandler,
         ]

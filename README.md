@@ -28,7 +28,8 @@ Notice Injector 不一样。它会：
 
 #### 主动交互，拉近距离
 - **发送戳一戳** — 机器人可以主动戳一戳用户引起注意
-- **发送表情回复** — 机器人可以给用户消息点赞、表达情绪
+- **AOE 戳一戳** — 机器人可以同时戳多个活跃用户（每人一次）
+- **发送表情回复** — 机器人可以给用户消息点赞、表达情绪（仅群聊）
 - **全场景支持** — 所有功能同时支持私聊和群聊
 
 ---
@@ -41,8 +42,9 @@ Notice Injector 通过框架的原生 Action 系统提供交互能力：
 
 | 动作               | 用途                     | 参数                                   |
 |--------------------|--------------------------|----------------------------------------|
-| `send_poke`        | 发送戳一戳               | `user_id`(必选), `group_id`(可选), `poke_count`(可选), `target_user_id`(可选), `target_group_id`(可选) |
-| `send_emoji_like`  | 发送表情回复             | `message_id` (必选), `emoji_id` (可选，默认126) |
+| `send_poke`        | 单用户连戳多次           | `user_id`(必选), `group_id`(可选), `poke_count`(可选), `target_user_id`(可选), `target_group_id`(可选) |
+| `send_poke_multiple` | 多用户各戳一次（AOE）  | `user_ids`(必选), `group_id`(必选), `max_targets`(可选，默认5), `validate_targets`(可选，默认true) |
+| `send_emoji_like`  | 发送表情回复（仅群聊）   | `message_id` (必选), `emoji_id` (可选，默认126) |
 
 ### 通知处理流程
 
@@ -119,6 +121,17 @@ notice_injector/
     - 群聊校验：`validate_target_in_group=true` 时使用 `get_group_member_info`
     - 私聊校验：`validate_target_in_private=true` 时使用 `get_stranger_info`
     - 私聊默认 `validate_target_in_private=false`，且通常不推荐改为 `true`（会增加额外 API 调用）
+
+### `send_poke_multiple` 行为说明
+
+- 与 `send_poke` 为互斥关系，二选一使用：
+    - `send_poke`：单用户连戳多次
+    - `send_poke_multiple`：多用户各戳一次
+- 每人只戳一次，不支持连戳
+- 人数上限由 `max_targets` 控制（默认 5）
+- LLM 应从上下文判断"活跃用户"是谁，建议从最近消息中提取
+- 目标校验默认开启，会过滤无效用户
+- AOE 戳一戳仅支持群聊
 
 ### 推荐配置（低延迟+稳健）
 

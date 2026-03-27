@@ -16,6 +16,12 @@
     },
     {
       "component_type": "action",
+      "component_name": "send_poke_multiple",
+      "dependencies": [],
+      "enabled": true
+    },
+    {
+      "component_type": "action",
       "component_name": "send_emoji_like",
       "dependencies": [],
       "enabled": true
