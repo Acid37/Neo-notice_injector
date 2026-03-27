@@ -286,7 +286,7 @@ class SendPokeMultipleAction(BaseAction):
     async def execute(
         self,
         user_ids: list[str],
-        group_id: str,
+        group_id: str | None = None,
         max_targets: int | None = None,
         validate_targets: bool | None = None,
     ) -> tuple[bool, str]:
@@ -294,7 +294,7 @@ class SendPokeMultipleAction(BaseAction):
 
         Args:
             user_ids: 目标用户ID列表
-            group_id: 群号
+            group_id: 群号（可选，如果 LLM 未提供会从上下文回退解析）
             max_targets: 最大目标人数上限（默认从配置读取）
             validate_targets: 是否校验目标用户存在（默认从配置读取）
         """
@@ -331,10 +331,43 @@ class SendPokeMultipleAction(BaseAction):
                 logger.warning(f"AOE戳一戳目标人数 {len(user_ids)} 超过上限 {effective_max}，已截断")
                 user_ids = user_ids[:effective_max]
 
-            # 归一化 group_id
+            # 归一化 group_id（优先使用传入值）
             normalized_group_id = SendPokeAction._normalize_numeric_id(group_id)
+            if not normalized_group_id and group_id is not None:
+                logger.warning(f"收到无效 group_id（非数字），将尝试从上下文回退解析: {group_id}")
+
+            # 从上下文中回退解析 group_id（内联逻辑，避免跨类静态方法调用）
             if not normalized_group_id:
-                return False, f"无效的群号: {group_id}"
+                chat_stream = getattr(self, "chat_stream", None)
+                if chat_stream:
+                    # 1) 优先从当前消息 extra 中获取
+                    context = getattr(chat_stream, "context", None)
+                    if context:
+                        current_message = getattr(context, "current_message", None)
+                        if current_message:
+                            extra = getattr(current_message, "extra", {})
+                            normalized_group_id = SendPokeAction._normalize_numeric_id(extra.get("group_id"))
+                            if normalized_group_id:
+                                logger.debug(f"从消息上下文获取到 group_id: {normalized_group_id}")
+
+                    # 2) 回退：按 stream_id 查询 chat_streams 表中的 group_id
+                    if not normalized_group_id:
+                        stream_id = getattr(chat_stream, "stream_id", "")
+                        if stream_id:
+                            try:
+                                from src.core.models.sql_alchemy import ChatStreams
+                                from src.kernel.db import QueryBuilder
+
+                                record = await QueryBuilder(ChatStreams).filter(stream_id=stream_id).first()
+                                if record:
+                                    normalized_group_id = SendPokeAction._normalize_numeric_id(getattr(record, "group_id", None))
+                                    if normalized_group_id:
+                                        logger.debug(f"从数据库查询到 group_id: {normalized_group_id}")
+                            except Exception as e:
+                                logger.debug(f"通过 stream_id 回查 group_id 失败: {e}")
+
+            if not normalized_group_id:
+                return False, "无法获取群号，group_id 为空且无法从上下文解析"
 
             # 读取适配器配置
             adapter_sign = "napcat_adapter:adapter:napcat_adapter"
