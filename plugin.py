@@ -191,7 +191,7 @@ class NoticeInjectorPlugin(BasePlugin):
     """NoticeInjector 插件主类"""
 
     plugin_name = "notice_injector"
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     plugin_author = "NeoFox"
     plugin_description = "将 QQ 通知消息（如戳一戳、表情回复等）转换为标准文本消息。"
     configs = [NoticeInjectorConfig]
