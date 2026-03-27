@@ -278,7 +278,7 @@ class SendPokeMultipleAction(BaseAction):
         "参数说明："
         "- user_ids: 目标用户ID列表（必填）。建议从上下文最近有互动的用户中选择。"
         "- group_id: 群号（必填），必须是数字ID，不能传群名。"
-        "- max_targets: 最大目标人数上限，默认5，最大20。"
+        "- max_targets: 最大目标人数上限，默认5，最大10。"
         "- validate_targets: 是否校验目标用户存在，默认true。"
         "注意：每人只戳一次，不支持连戳。"
     )
@@ -312,7 +312,7 @@ class SendPokeMultipleAction(BaseAction):
                         config_max = int(getattr(plugin_config, "aoe_poke_max_targets", 5) or 5)
                     except (TypeError, ValueError):
                         config_max = 5
-                max_targets = min(max(config_max, 1), 20)  # 硬上限 20
+                max_targets = min(max(config_max, 1), 10)  # 硬上限 10
 
             # validate_targets 默认值
             if validate_targets is None:
@@ -326,7 +326,7 @@ class SendPokeMultipleAction(BaseAction):
                 return False, "目标用户列表为空"
 
             # 限制人数
-            effective_max = min(max(max_targets, 1), 20)
+            effective_max = min(max(max_targets, 1), 10)
             if len(user_ids) > effective_max:
                 logger.warning(f"AOE戳一戳目标人数 {len(user_ids)} 超过上限 {effective_max}，已截断")
                 user_ids = user_ids[:effective_max]
