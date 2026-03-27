@@ -221,6 +221,12 @@ class SendEmojiLikeAction(BaseAction):
             message_id: 要回复的消息ID
             emoji_id: 表情ID，默认是点赞表情(126)。必须为正整数字符串。
         """
+        # 检查是否为群聊环境
+        chat_type = getattr(self.chat_stream, "chat_type", "")
+        if "group" not in str(chat_type).lower():
+            logger.warning(f"表情回复仅支持群聊，当前环境: {chat_type}")
+            return False, "表情回复仅支持群聊环境"
+
         # 校验 message_id
         if not message_id or not str(message_id).strip():
             logger.warning("发送表情回复失败：message_id 为空")
