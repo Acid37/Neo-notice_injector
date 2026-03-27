@@ -105,6 +105,8 @@ notice_injector/
 | `validate_target_before_poke` | `false` | 发送戳一戳前是否先校验目标 |
 | `validate_target_in_group` | `true` | 群聊场景是否执行目标校验 |
 | `validate_target_in_private` | `false` | 私聊场景是否执行目标校验（通常不推荐设为 `true`） |
+| `aoe_poke_max_targets` | `5` | AOE 戳一戳最大目标人数上限（内部硬上限 20） |
+| `validate_target_before_aoe_poke` | `true` | AOE 戳一戳前是否校验目标用户存在 |
 
 ### `send_poke` 行为说明
 

@@ -29,12 +29,15 @@ class NoticeInjectorConfig(BaseConfig):
         default_emoji_id: str = Field(default="126", description="发送表情回复时的默认表情ID（未指定时使用）。126=点赞，具体ID可参考 QQ 表情列表。")
         # 适配器配置
         adapter_sign: str = Field(default="napcat_adapter:adapter:napcat_adapter", description="适配器签名，用于发送戳一戳和表情回复命令。默认值适用于 NapCat 适配器。")
-        # 戳一戳连击限制
+        # 单戳连击限制
         max_poke_count: int = Field(default=3, description="单次动作最大连戳次数。建议 1~3；运行时会被强制限制在 [1, 10]。")
         poke_interval_min_ms: int = Field(default=100, description="连戳最小间隔（毫秒）。与 max 组成随机区间，降低风控概率。")
         poke_interval_max_ms: int = Field(default=200, description="连戳最大间隔（毫秒）。若小于 min，运行时会自动交换两者。")
         validate_target_before_poke: bool = Field(default=False, description="发送戳一戳前是否先做目标存在性校验（程序内 API，不消耗 LLM token）。")
         validate_target_in_group: bool = Field(default=True, description="群聊场景是否执行目标校验（建议开启，避免无效成员 ID）。")
         validate_target_in_private: bool = Field(default=False, description="私聊场景是否执行目标校验。默认 false；通常不推荐设为 true（会增加一次额外 API 调用）。")
+        # AOE 戳一戳配置
+        aoe_poke_max_targets: int = Field(default=5, description="AOE 戳一戳（send_poke_multiple）的最大目标人数上限。运行时会被限制在 [1, 20]。")
+        validate_target_before_aoe_poke: bool = Field(default=True, description="AOE 戳一戳前是否校验目标用户存在。")
 
     plugin: PluginSection = Field(default_factory=PluginSection)

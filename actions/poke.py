@@ -278,7 +278,7 @@ class SendPokeMultipleAction(BaseAction):
         "参数说明："
         "- user_ids: 目标用户ID列表（必填）。建议从上下文最近有互动的用户中选择。"
         "- group_id: 群号（必填），必须是数字ID，不能传群名。"
-        "- max_targets: 最大目标人数上限，默认5。"
+        "- max_targets: 最大目标人数上限，默认5，最大20。"
         "- validate_targets: 是否校验目标用户存在，默认true。"
         "注意：每人只戳一次，不支持连戳。"
     )
@@ -287,26 +287,49 @@ class SendPokeMultipleAction(BaseAction):
         self,
         user_ids: list[str],
         group_id: str,
-        max_targets: int = 5,
-        validate_targets: bool = True,
+        max_targets: int | None = None,
+        validate_targets: bool | None = None,
     ) -> tuple[bool, str]:
         """执行 AOE 戳一戳动作
 
         Args:
             user_ids: 目标用户ID列表
             group_id: 群号
-            max_targets: 最大目标人数上限
-            validate_targets: 是否校验目标用户存在
+            max_targets: 最大目标人数上限（默认从配置读取）
+            validate_targets: 是否校验目标用户存在（默认从配置读取）
         """
         try:
+            # 从配置读取默认值
+            plugin_obj = getattr(self, "plugin", None)
+            config_obj = getattr(plugin_obj, "config", None)
+            plugin_config = getattr(config_obj, "plugin", None)
+
+            # max_targets 默认值
+            if max_targets is None:
+                config_max = 5
+                if plugin_config is not None:
+                    try:
+                        config_max = int(getattr(plugin_config, "aoe_poke_max_targets", 5) or 5)
+                    except (TypeError, ValueError):
+                        config_max = 5
+                max_targets = min(max(config_max, 1), 20)  # 硬上限 20
+
+            # validate_targets 默认值
+            if validate_targets is None:
+                if plugin_config is not None:
+                    validate_targets = bool(getattr(plugin_config, "validate_target_before_aoe_poke", True))
+                else:
+                    validate_targets = True
+
             # 参数预处理
             if not user_ids:
                 return False, "目标用户列表为空"
 
             # 限制人数
-            if len(user_ids) > max_targets:
-                logger.warning(f"AOE戳一戳目标人数 {len(user_ids)} 超过上限 {max_targets}，已截断")
-                user_ids = user_ids[:max_targets]
+            effective_max = min(max(max_targets, 1), 20)
+            if len(user_ids) > effective_max:
+                logger.warning(f"AOE戳一戳目标人数 {len(user_ids)} 超过上限 {effective_max}，已截断")
+                user_ids = user_ids[:effective_max]
 
             # 归一化 group_id
             normalized_group_id = SendPokeAction._normalize_numeric_id(group_id)
@@ -317,9 +340,6 @@ class SendPokeMultipleAction(BaseAction):
             adapter_sign = "napcat_adapter:adapter:napcat_adapter"
             interval_min_ms = 100
             interval_max_ms = 200
-            plugin_obj = getattr(self, "plugin", None)
-            config_obj = getattr(plugin_obj, "config", None)
-            plugin_config = getattr(config_obj, "plugin", None)
             if plugin_config is not None:
                 _sign = getattr(plugin_config, "adapter_sign", None)
                 if _sign and str(_sign).strip():
