@@ -98,6 +98,27 @@ notice_injector/
 | `enable_group_upload` | `true` | 是否处理文件上传通知 |
 | `enable_debug` | `false` | 是否输出调试日志 |
 | `ignore_self_notice` | `true` | 是否忽略机器人自己触发的通知 |
+
+---
+
+## 🛠️ TODO / 路线图
+
+根据插件现状，以下功能计划按优先级开发：
+
+### 🔴 高优先级：提升 AI 感知与反馈质量
+- [ ] **结构化 Prompt 注入**：修改 `NoticeInjectorEventHandler.execute`，将拼接的 `text_description` 包装在标记块中（如 `<social_interaction>...</social_interaction>`），并在 `src/core/prompt` 中定义相应的处理逻辑，使 LLM 识别其为系统事件而非用户发言。
+- [ ] **上下文关联 Emoji 回复**：在插件内维护一个简易的 `MessageHistoryCache`（记录 `group_id` / `user_id` 对应的最后 3 条 `message_id`），当 AI 调用 `send_emoji_like` 但未提供 ID 时，自动回填最新的消息 ID。
+- [ ] **社交频率限制 (Rate Limiter)**：在 `actions/poke.py` 中引入 `src/kernel/storage` 存储戳人记录，针对同一 `user_id` 在 60s 内仅允许执行一次 `poke` 动作，防止 AI 幻觉导致的无限循环戳人。
+
+### 🟡 中优先级：扩展社交场景
+- [ ] **“运气王”语义化**：解析 `notice_type: lucky_king`，从 `extra` 中提取红包金额和运气王昵称，转化为 `[系统通知：用户A成为了运气王，抢到了XX元]` 注入对话。
+- [ ] **成员变更实时感知**：监听 `EventType` 中的群成员增加/减少事件，提取入群方式或退群原因，转化为语义描述注入，触发 LLM 生动的欢迎语或告别语。
+- [ ] **Action 级联封装**：扩展 `Action` 的 `execute` 方法，支持返回一个包含 `send_message` 指令的 Task，实现“戳一下并附带一句话”的原子操作。
+
+### 🔵 低优先级：工程化优化
+- [ ] **语义情绪映射表**：在 `config.py` 中定义 `EMOTION_MAP: dict[str, int]`，将 LLM 常用的情绪词（如 "like", "cry", "fire"）实时映射为标准的 QQ 表情 ID，简化 AI 的交互逻辑。
+- [ ] **互动热度统计 Service**：利用 `src/kernel/db` 记录各用户的互动频率（被戳/被赞次数），通过 `src/core/components/base/service.py` 暴露接口，供好感度或活跃度插件查询。
+
 | `trigger_chat` | `false` | 是否将通知注入对话流触发聊天（关闭可省 token） |
 | `enable_send_emoji_like` | `true` | 是否启用主动动作 `send_emoji_like` |
 | `emoji_like_allowed_ids` | `[...]` | `send_emoji_like` 白名单表情 ID（用于约束乱贴） |
