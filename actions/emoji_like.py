@@ -167,6 +167,100 @@ _EMOJI_ID_MAX = 300  # 保守上限，实际可能更高
 # 默认适配器签名（可通过配置覆盖）
 _DEFAULT_ADAPTER_SIGN = "napcat_adapter:adapter:napcat_adapter"
 
+# 默认允许的“稳健”表情集合（语义更明确，减少乱贴）
+_DEFAULT_ALLOWED_EMOJI_IDS: tuple[str, ...] = (
+    "126",  # 点赞
+    "129",  # 抱抱
+    "131",  # 拍手
+    "132",  # 恭喜
+    "133",  # 干杯
+    "138",  # 耶
+    "140",  # 加油
+    "146",  # 好的
+    "148",  # 哇
+    "166",  # 开心
+    "176",  # 大笑
+    "182",  # 眨眼
+    "183",  # 嗯嗯
+    "184",  # 无语
+    "194",  # 谢谢
+)
+
+# 语义关键词到 emoji_id 的回复意图映射（强调“如何回应”，而非复读情绪）
+_SEMANTIC_EMOJI_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("194", ("谢谢", "谢啦", "感谢", "辛苦", "麻烦你", "多谢")),
+    ("132", ("恭喜", "祝贺", "牛", "厉害", "太强", "真棒", "优秀")),
+    ("140", ("加油", "冲", "稳住", "别慌", "顶住", "继续")),
+    ("129", ("抱抱", "安慰", "难过", "委屈", "别哭", "心疼", "伤心", "悲伤", "难受", "emo")),
+    ("146", ("收到", "好的", "ok", "没问题", "明白", "安排")),
+    ("131", ("支持", "同意", "靠谱", "赞同", "说得好")),
+    ("176", ("哈哈", "笑死", "乐", "有趣", "好玩", "逗")),
+)
+
+# 参考 emoji_sender 的标签化语义输入：用于“意图先验”
+_EMOTION_TAG_PRESET: tuple[str, ...] = (
+    "开心",
+    "难过",
+    "生气",
+    "惊讶",
+    "害羞",
+    "尴尬",
+    "无语",
+    "委屈",
+    "嘲讽",
+    "疑惑",
+    "赞同",
+    "否定",
+    "兴奋",
+    "疲惫",
+    "害怕",
+    "厌恶",
+    "紧张",
+    "冷漠",
+)
+
+_DEFAULT_EMOTION_TAG_TO_EMOJI: dict[str, str] = {
+    "开心": "166",
+    "难过": "129",
+    "生气": "184",
+    "惊讶": "148",
+    "害羞": "182",
+    "尴尬": "183",
+    "无语": "184",
+    "委屈": "129",
+    "嘲讽": "176",
+    "疑惑": "182",
+    "赞同": "131",
+    "否定": "184",
+    "兴奋": "138",
+    "疲惫": "183",
+    "害怕": "129",
+    "厌恶": "184",
+    "紧张": "140",
+    "冷漠": "184",
+}
+
+_DEFAULT_EMOTION_TAG_PRIORITY: tuple[str, ...] = (
+    "委屈",
+    "难过",
+    "害怕",
+    "生气",
+    "赞同",
+    "否定",
+    "疑惑",
+    "惊讶",
+    "开心",
+    "兴奋",
+    "尴尬",
+    "无语",
+    "疲惫",
+    "紧张",
+    "厌恶",
+    "冷漠",
+    "嘲讽",
+    "害羞",
+)
+
 
 def _normalize_emoji_id(emoji_id: object) -> str | None:
     """将输入归一化为合法的表情 ID 字符串。
@@ -185,6 +279,165 @@ def _normalize_emoji_id(emoji_id: object) -> str | None:
     return text
 
 
+def _normalize_allowed_emoji_ids(raw_ids: object) -> set[str]:
+    """将配置中的允许列表归一化为合法的 emoji_id 集合。"""
+    if not isinstance(raw_ids, list):
+        return set(_DEFAULT_ALLOWED_EMOJI_IDS)
+
+    normalized = {
+        valid_id
+        for item in raw_ids
+        if (valid_id := _normalize_emoji_id(item)) is not None
+    }
+    if not normalized:
+        return set(_DEFAULT_ALLOWED_EMOJI_IDS)
+    return normalized
+
+
+def _pick_emoji_by_semantic_hint(
+    semantic_hint: str,
+    semantic_rules: tuple[tuple[str, tuple[str, ...]], ...],
+    default_emoji_id: str,
+) -> str:
+    """基于语义提示选择表情；未命中时回退默认值。"""
+    text = semantic_hint.strip().lower()
+    if not text:
+        return default_emoji_id
+
+    for emoji_id, keywords in semantic_rules:
+        if any(keyword in text for keyword in keywords):
+            return emoji_id
+
+    return default_emoji_id
+
+
+def _normalize_custom_semantic_rules(
+    raw_rules: object,
+) -> dict[str, tuple[str, ...]]:
+    """归一化自定义语义规则。"""
+    if not isinstance(raw_rules, dict):
+        return {}
+
+    normalized: dict[str, tuple[str, ...]] = {}
+    for emoji_id_raw, keywords_raw in raw_rules.items():
+        emoji_id = _normalize_emoji_id(emoji_id_raw)
+        if emoji_id is None:
+            continue
+        if not isinstance(keywords_raw, list):
+            continue
+
+        keywords = tuple(
+            keyword.strip().lower()
+            for keyword in keywords_raw
+            if isinstance(keyword, str) and keyword.strip()
+        )
+        if keywords:
+            normalized[emoji_id] = keywords
+
+    return normalized
+
+
+def _build_semantic_rules(
+    allowed_emoji_ids: set[str],
+    custom_rules: object,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """构建最终语义规则：自定义优先，内置补齐。"""
+    merged: dict[str, tuple[str, ...]] = {}
+
+    normalized_custom = _normalize_custom_semantic_rules(custom_rules)
+    for emoji_id, keywords in normalized_custom.items():
+        if emoji_id in allowed_emoji_ids:
+            merged[emoji_id] = keywords
+
+    for emoji_id, builtin_keywords in _SEMANTIC_EMOJI_RULES:
+        if emoji_id not in allowed_emoji_ids:
+            continue
+        if emoji_id in merged:
+            merged[emoji_id] = tuple(dict.fromkeys((*merged[emoji_id], *builtin_keywords)))
+        else:
+            merged[emoji_id] = builtin_keywords
+
+    return tuple((emoji_id, keywords) for emoji_id, keywords in merged.items())
+
+
+def _normalize_emotion_tags(raw_tags: object) -> list[str]:
+    """归一化 emotion_tags，仅保留预设标签。"""
+    if not isinstance(raw_tags, list):
+        return []
+    normalized: list[str] = []
+    for raw in raw_tags:
+        if not isinstance(raw, str):
+            continue
+        tag = raw.strip()
+        if tag in _EMOTION_TAG_PRESET and tag not in normalized:
+            normalized.append(tag)
+    return normalized
+
+
+def _normalize_emotion_tag_to_emoji_map(raw_map: object) -> dict[str, str]:
+    """归一化 emotion_tag -> emoji_id 映射。"""
+    if not isinstance(raw_map, dict):
+        return {}
+
+    result: dict[str, str] = {}
+    for tag_raw, emoji_id_raw in raw_map.items():
+        if not isinstance(tag_raw, str):
+            continue
+        tag = tag_raw.strip()
+        if tag not in _EMOTION_TAG_PRESET:
+            continue
+        emoji_id = _normalize_emoji_id(emoji_id_raw)
+        if emoji_id is None:
+            continue
+        result[tag] = emoji_id
+    return result
+
+
+def _normalize_emotion_tag_priority(raw_priority: object) -> list[str]:
+    """归一化 emotion tag 优先级列表。"""
+    if not isinstance(raw_priority, list):
+        return []
+
+    normalized: list[str] = []
+    for item in raw_priority:
+        if not isinstance(item, str):
+            continue
+        tag = item.strip()
+        if tag and tag in _EMOTION_TAG_PRESET and tag not in normalized:
+            normalized.append(tag)
+    return normalized
+
+
+def _sort_emotion_tags_by_priority(
+    emotion_tags: list[str],
+    priority_tags: list[str],
+) -> list[str]:
+    """根据优先级对标签排序，未声明优先级的保持原始相对顺序。"""
+    priority_index = {tag: idx for idx, tag in enumerate(priority_tags)}
+    fallback_base = len(priority_index)
+
+    return sorted(
+        emotion_tags,
+        key=lambda item: (priority_index.get(item, fallback_base), emotion_tags.index(item)),
+    )
+
+
+def _pick_emoji_by_emotion_tags(
+    emotion_tags: list[str],
+    allowed_emoji_ids: set[str],
+    emotion_tag_to_emoji_map: dict[str, str],
+    emotion_tag_priority: list[str],
+) -> str | None:
+    """按 emotion_tags 先验选择 emoji_id。"""
+    ordered_tags = _sort_emotion_tags_by_priority(emotion_tags, emotion_tag_priority)
+
+    for tag in ordered_tags:
+        mapped = emotion_tag_to_emoji_map.get(tag)
+        if mapped and mapped in allowed_emoji_ids:
+            return mapped
+    return None
+
+
 class SendEmojiLikeAction(BaseAction):
     """发送表情回复动作给消息"""
 
@@ -193,33 +446,31 @@ class SendEmojiLikeAction(BaseAction):
         "给指定消息发送表情回复（QQ 表情点赞/回应）。"
         "参数说明："
         "- message_id: 要回复的消息ID（必填，字符串格式的数字）。"
-        "- emoji_id: 表情ID，必须是正整数字符串，默认 '126'（点赞）。"
+        "- emoji_id: 表情ID，可选；该参数仅为兼容保留，执行时会忽略。"
+        "  可传 'auto' 触发语义自动选择。"
+        "- semantic_hint: 语义提示文本（必填）；用于匹配“回复意图”。"
+        "- emotion_tags: 情感标签列表（可选）。若提供，会先按标签做意图先验选择。"
         "常用表情ID对照："
         "126=点赞, 127=踩, 129=抱抱, 131=拍手, 132=恭喜, 133=干杯, "
         "138=耶, 140=加油, 146=好的, 148=哇, 166=开心, 176=大笑, "
         "182=眨眼, 183=嗯嗯, 184=无语, 194=谢谢。"
-        "请根据语境选择合适的表情，不要随意猜测表情ID。"
+        "请根据语境选择“回应型”表情，不要把对方情绪原样复读。"
     )
 
-    def _get_adapter_sign(self) -> str:
-        """获取适配器签名，优先从插件配置读取，回退到默认值。"""
-        try:
-            plugin_obj = getattr(self, "plugin", None)
-            config_obj = getattr(plugin_obj, "config", None)
-            plugin_config = getattr(config_obj, "plugin", None)
-            sign = getattr(plugin_config, "adapter_sign", None)
-            if sign and str(sign).strip():
-                return str(sign).strip()
-        except Exception:
-            pass
-        return _DEFAULT_ADAPTER_SIGN
-
-    async def execute(self, message_id: str, emoji_id: str = "126") -> tuple[bool, str]:
+    async def execute(
+        self,
+        message_id: str,
+        emoji_id: str = "126",
+        semantic_hint: str = "",
+        emotion_tags: list[str] | None = None,
+    ) -> tuple[bool, str]:
         """执行发送表情回复动作
 
         Args:
             message_id: 要回复的消息ID
-            emoji_id: 表情ID，默认是点赞表情(126)。必须为正整数字符串。
+            emoji_id: 表情ID（兼容参数，执行时会忽略）。
+            semantic_hint: 语义提示文本（必填），用于自动匹配回复意图。
+            emotion_tags: 情感标签列表（可选，参考 emoji_sender 标签集合）。
         """
         # 检查是否为群聊环境
         chat_type = getattr(self.chat_stream, "chat_type", "")
@@ -232,25 +483,86 @@ class SendEmojiLikeAction(BaseAction):
             logger.warning("发送表情回复失败：message_id 为空")
             return False, "发送表情回复失败：message_id 不能为空"
 
-        # 从配置读取默认 emoji_id（优先级：参数 > 配置默认值 > 硬编码 126）
+        # 强制语义模式：必须提供 semantic_hint
+        semantic_text = str(semantic_hint or "").strip()
+        if not semantic_text:
+            logger.warning("发送表情回复失败：semantic_hint 为空（语义结合为必选）")
+            return False, "发送表情回复失败：semantic_hint 不能为空（语义结合为必选）"
+
+        # 从配置读取功能开关与默认策略
         try:
             plugin_obj = getattr(self, "plugin", None)
             config_obj = getattr(plugin_obj, "config", None)
             plugin_config = getattr(config_obj, "plugin", None)
             config_default = getattr(plugin_config, "default_emoji_id", "126") or "126"
+            enable_send_emoji_like = bool(
+                getattr(plugin_config, "enable_send_emoji_like", True)
+            )
+            strict_mode = bool(getattr(plugin_config, "emoji_like_strict_mode", True))
+            allowed_emoji_ids = _normalize_allowed_emoji_ids(
+                getattr(plugin_config, "emoji_like_allowed_ids", list(_DEFAULT_ALLOWED_EMOJI_IDS))
+            )
+            custom_semantic_rules = getattr(plugin_config, "emoji_like_custom_rules", {})
+            custom_emotion_tag_map = getattr(plugin_config, "emoji_like_emotion_tag_map", {})
+            custom_emotion_tag_priority = getattr(
+                plugin_config,
+                "emoji_like_emotion_tag_priority",
+                list(_DEFAULT_EMOTION_TAG_PRIORITY),
+            )
         except Exception:
             config_default = "126"
+            enable_send_emoji_like = True
+            strict_mode = True
+            allowed_emoji_ids = set(_DEFAULT_ALLOWED_EMOJI_IDS)
+            custom_semantic_rules = {}
+            custom_emotion_tag_map = {}
+            custom_emotion_tag_priority = list(_DEFAULT_EMOTION_TAG_PRIORITY)
 
-        # 校验并归一化 emoji_id
-        normalized_emoji_id = _normalize_emoji_id(emoji_id)
+        if not enable_send_emoji_like:
+            logger.info("已通过配置关闭 send_emoji_like 动作，跳过执行")
+            return False, "send_emoji_like 已关闭（enable_send_emoji_like=false）"
+
+        normalized_default = _normalize_emoji_id(config_default) or "126"
+
+        # 若默认值不在白名单，兜底到白名单中的点赞（126）或排序后的第一个可用值
+        if normalized_default not in allowed_emoji_ids:
+            normalized_default = "126" if "126" in allowed_emoji_ids else sorted(allowed_emoji_ids)[0]
+
+        semantic_rules = _build_semantic_rules(
+            allowed_emoji_ids=allowed_emoji_ids,
+            custom_rules=custom_semantic_rules,
+        )
+        normalized_emotion_tags = _normalize_emotion_tags(emotion_tags)
+        emotion_tag_map = {
+            **_DEFAULT_EMOTION_TAG_TO_EMOJI,
+            **_normalize_emotion_tag_to_emoji_map(custom_emotion_tag_map),
+        }
+        emotion_tag_priority = _normalize_emotion_tag_priority(custom_emotion_tag_priority)
+        if not emotion_tag_priority:
+            emotion_tag_priority = list(_DEFAULT_EMOTION_TAG_PRIORITY)
+
+        # 强制语义选取：忽略显式 emoji_id，统一按 semantic_hint 决策
+        if str(emoji_id or "").strip():
+            logger.debug("send_emoji_like 收到显式 emoji_id，但当前为强制语义模式，将忽略该参数")
+
+        normalized_emoji_id = _pick_emoji_by_emotion_tags(
+            emotion_tags=normalized_emotion_tags,
+            allowed_emoji_ids=allowed_emoji_ids,
+            emotion_tag_to_emoji_map=emotion_tag_map,
+            emotion_tag_priority=emotion_tag_priority,
+        )
         if normalized_emoji_id is None:
-            # 尝试使用配置中的默认值
-            fallback = _normalize_emoji_id(config_default) or "126"
-            logger.warning(
-                f"收到无效 emoji_id='{emoji_id}'，已回退到配置默认值 '{fallback}'"
-                f"（{_COMMON_EMOJI_MAP.get(fallback, 'ID:' + fallback)}）"
+            normalized_emoji_id = _pick_emoji_by_semantic_hint(
+                semantic_hint=semantic_text,
+                semantic_rules=semantic_rules,
+                default_emoji_id=normalized_default,
             )
-            normalized_emoji_id = fallback
+
+        if strict_mode and normalized_emoji_id not in allowed_emoji_ids:
+            logger.warning(
+                f"emoji_id={normalized_emoji_id} 不在允许列表中，已回退到默认值 {normalized_default}"
+            )
+            normalized_emoji_id = normalized_default
 
         emoji_name = _COMMON_EMOJI_MAP.get(normalized_emoji_id, f"ID:{normalized_emoji_id}")
 
@@ -260,7 +572,7 @@ class SendEmojiLikeAction(BaseAction):
             "emoji_id": normalized_emoji_id,
         }
 
-        adapter_sign = self._get_adapter_sign()
+        adapter_sign = _DEFAULT_ADAPTER_SIGN
 
         try:
             # 发送表情回复命令到 napcat 适配器

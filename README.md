@@ -44,7 +44,7 @@ Notice Injector 通过框架的原生 Action 系统提供交互能力：
 |--------------------|--------------------------|----------------------------------------|
 | `send_poke`        | 单用户连戳多次           | `user_id`(必选), `group_id`(可选), `poke_count`(可选), `target_user_id`(可选), `target_group_id`(可选) |
 | `send_poke_multiple` | 多用户各戳一次（AOE）  | `user_ids`(必选), `group_id`(必选), `max_targets`(可选，默认5), `validate_targets`(可选，默认true) |
-| `send_emoji_like`  | 发送表情回复（仅群聊）   | `message_id` (必选), `emoji_id` (可选，默认126) |
+| `send_emoji_like`  | 发送表情回复（仅群聊）   | `message_id` (必选), `semantic_hint` (必选), `emotion_tags` (可选), `emoji_id` (兼容参数，执行时忽略) |
 
 ### 通知处理流程
 
@@ -99,6 +99,12 @@ notice_injector/
 | `enable_debug` | `false` | 是否输出调试日志 |
 | `ignore_self_notice` | `true` | 是否忽略机器人自己触发的通知 |
 | `trigger_chat` | `false` | 是否将通知注入对话流触发聊天（关闭可省 token） |
+| `enable_send_emoji_like` | `true` | 是否启用主动动作 `send_emoji_like` |
+| `emoji_like_allowed_ids` | `[...]` | `send_emoji_like` 白名单表情 ID（用于约束乱贴） |
+| `emoji_like_strict_mode` | `true` | 开启后不在白名单内的表情会回退默认值 |
+| `emoji_like_custom_rules` | `{}` | 自定义语义规则，格式 `{emoji_id: [关键词...]}`，用于补充/覆盖内置规则 |
+| `emoji_like_emotion_tag_map` | `{}` | 自定义标签映射，格式 `{标签: emoji_id}`，用于 `emotion_tags` 先验决策 |
+| `emoji_like_emotion_tag_priority` | `[...]` | 多标签冲突时的优先级（纯本地规则，零额外消耗） |
 | `max_poke_count` | `3` | 单次允许最大连戳次数（内部硬上限 10） |
 | `poke_interval_min_ms` | `100` | 连戳最小间隔（毫秒） |
 | `poke_interval_max_ms` | `200` | 连戳最大间隔（毫秒） |
@@ -134,6 +140,27 @@ notice_injector/
 - LLM 应从上下文判断"活跃用户"是谁，建议从最近消息中提取
 - 目标校验默认开启，会过滤无效用户
 - AOE 戳一戳仅支持群聊
+
+### `send_emoji_like` 行为说明
+
+- 回复意图优先（强制）：
+    - action 会忽略显式 `emoji_id`，仅根据 `semantic_hint` 做语义选取
+    - 这样可避免“对方说难过 -> 机器人也发哭泣”这类情绪复读
+- 标签先验（参考 emoji_sender）：
+    - 若传入 `emotion_tags`，会先按标签映射选择表情，再回退到 `semantic_hint` 规则
+    - 默认支持标签：开心/难过/生气/惊讶/害羞/尴尬/无语/委屈/嘲讽/疑惑/赞同/否定/兴奋/疲惫/害怕/厌恶/紧张/冷漠
+- 冲突决策（零额外消耗）：
+    - 当同时出现多个标签时，按 `emoji_like_emotion_tag_priority` 选择最高优先级标签
+    - 该步骤仅本地排序，不触发任何额外模型调用
+- `semantic_hint` 为必填：
+    - 未提供时将拒绝执行，避免脱离语义上下文乱贴
+- 语义未命中时：
+    - 回退到 `default_emoji_id`（默认 `126` 点赞）
+- 继续加入语义规则：
+    - 在 `emoji_like_custom_rules` 中按 `{emoji_id: [关键词...]}` 添加
+    - 自定义规则优先于内置规则，且会与内置关键词自动合并
+- 推荐调用方式：
+    - 只需填写 `semantic_hint`（例如：感谢/恭喜/安慰/加油/确认）
 
 ### 推荐配置（低延迟+稳健）
 

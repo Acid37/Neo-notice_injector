@@ -10,6 +10,8 @@ from src.app.plugin_system.api.log_api import get_logger
 
 logger = get_logger("notice_injector")
 
+_DEFAULT_ADAPTER_SIGN = "napcat_adapter:adapter:napcat_adapter"
+
 
 class SendPokeAction(BaseAction):
     """发送戳一戳动作给用户"""
@@ -111,13 +113,13 @@ class SendPokeAction(BaseAction):
                 requested_count = 1
             actual_count = min(max(requested_count, 1), effective_max)
 
-            # 0.1 读取连续执行间隔（毫秒）、目标校验开关及适配器签名并归一化
+            # 0.1 读取连续执行间隔（毫秒）与目标校验开关并归一化
             interval_min_ms = 100
             interval_max_ms = 200
             validate_target_before_poke = False
             validate_target_in_group = True
             validate_target_in_private = False
-            adapter_sign = "napcat_adapter:adapter:napcat_adapter"
+            adapter_sign = _DEFAULT_ADAPTER_SIGN
             if plugin_config is not None:
                 try:
                     interval_min_ms = int(getattr(plugin_config, "poke_interval_min_ms", 100) or 0)
@@ -136,9 +138,6 @@ class SendPokeAction(BaseAction):
                 validate_target_in_private = bool(
                     getattr(plugin_config, "validate_target_in_private", False)
                 )
-                _sign = getattr(plugin_config, "adapter_sign", None)
-                if _sign and str(_sign).strip():
-                    adapter_sign = str(_sign).strip()
 
             interval_min_ms = max(0, interval_min_ms)
             interval_max_ms = max(0, interval_max_ms)
@@ -369,14 +368,11 @@ class SendPokeMultipleAction(BaseAction):
             if not normalized_group_id:
                 return False, "无法获取群号，group_id 为空且无法从上下文解析"
 
-            # 读取适配器配置
-            adapter_sign = "napcat_adapter:adapter:napcat_adapter"
+            # 读取动作参数配置
+            adapter_sign = _DEFAULT_ADAPTER_SIGN
             interval_min_ms = 100
             interval_max_ms = 200
             if plugin_config is not None:
-                _sign = getattr(plugin_config, "adapter_sign", None)
-                if _sign and str(_sign).strip():
-                    adapter_sign = str(_sign).strip()
                 try:
                     interval_min_ms = int(getattr(plugin_config, "poke_interval_min_ms", 100) or 0)
                     interval_max_ms = int(getattr(plugin_config, "poke_interval_max_ms", 200) or 0)
