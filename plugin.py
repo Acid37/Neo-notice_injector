@@ -88,7 +88,14 @@ class NoticeInjectorEventHandler(BaseEventHandler):
         if not text_description:
             return EventDecision.SUCCESS, params
 
-        # 3. 按类型检查功能开关
+        # 3. 按类型检查功能开关（分层控制：先检查总开关 trigger_chat，再检查分开关 enable_*）
+        # 第一层：检查是否启用了聊天触发（总开关）
+        if not config.plugin.trigger_chat:
+            if config.plugin.enable_debug:
+                logger.debug(f"Chat Trigger 未启用（总开关关闭），忽略所有通知：{text_description}")
+            return EventDecision.SUCCESS, params
+        
+        # 第二层：检查具体通知类型的分开关
         if notice_type == "poke" and not config.plugin.enable_poke:
             if config.plugin.enable_debug:
                 logger.debug(f"通过配置忽略戳一戳通知: {text_description}")
@@ -122,12 +129,6 @@ class NoticeInjectorEventHandler(BaseEventHandler):
                     logger.debug(f"检测到自己发送的动作，已忽略: {text_description}")
                 return EventDecision.SUCCESS, params
             
-        # 5. 检查是否启用了聊天触发
-        # 如果未启用 trigger_chat，则不注入消息，从而避免消耗 Token 和污染上下文
-        if not config.plugin.trigger_chat:
-            if config.plugin.enable_debug:
-                logger.debug(f"Chat Trigger 未启用，忽略通知: {text_description}")
-            return EventDecision.SUCCESS, params
 
         # 根据 notice 类型处理并记录日志
         if config.plugin.enable_debug:
