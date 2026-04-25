@@ -40,11 +40,18 @@ Notice Injector 不一样。它会：
 
 Notice Injector 通过框架的原生 Action 系统提供交互能力：
 
-| 动作               | 用途                     | 参数                                   |
-|--------------------|--------------------------|----------------------------------------|
-| `send_poke`        | 单用户连戳多次           | `user_id`(必选), `group_id`(可选), `poke_count`(可选), `target_user_id`(可选), `target_group_id`(可选) |
-| `send_poke_multiple` | 多用户各戳一次（AOE）  | `user_ids`(必选), `group_id`(必选), `max_targets`(可选，默认5), `validate_targets`(可选，默认true) |
-| `send_emoji_like`  | 发送表情回复（仅群聊）   | `message_id` (必选), `semantic_hint` (必选), `emotion_tags` (可选), `emoji_id` (兼容参数，执行时忽略) |
+| 动作                        | 用途                     | 适用场景 | 参数                                   |
+|----------------------------|--------------------------|----------|----------------------------------------|
+| `send_group_poke`          | 群聊单用户连戳多次        | 仅群聊   | `user_id`(必选), `group_id`(可选), `poke_count`(可选), `target_user_id`(可选), `target_group_id`(可选) |
+| `send_private_poke`        | 私聊单用户连戳多次        | 仅私聊   | `user_id`(必选), `poke_count`(可选), `target_user_id`(可选) |
+| `send_group_poke_multiple` | 群聊多用户各戳一次（AOE） | 仅群聊   | `user_ids`(必选), `group_id`(可选), `max_targets`(可选，默认5), `validate_targets`(可选，默认true) |
+| `send_emoji_like`          | 发送表情回复              | 仅群聊   | `message_id` (必选), `semantic_hint` (必选), `emotion_tags` (可选), `emoji_id` (兼容参数，执行时忽略) |
+
+**架构优化说明**：
+- 戳一戳功能已拆分为群聊和私聊独立 Action，框架会根据 `chat_type` 自动过滤
+- 群聊环境：LLM 只能看到 `send_group_poke` 和 `send_group_poke_multiple`
+- 私聊环境：LLM 只能看到 `send_private_poke`
+- 无降级逻辑，避免群聊误触私聊或反之
 
 ### 通知处理流程
 
@@ -75,8 +82,9 @@ notice_injector/
 ├── LICENSE                  # MIT 许可证
 ├── README.md                # 插件文档
 └── actions/
-    ├── poke.py              # send_poke 动作实现
-    └── emoji_like.py        # send_emoji_like 动作实现
+    ├── __init__.py          # Actions 模块导出
+    ├── poke.py              # 戳一戳动作实现（群聊/私聊/AOE）
+    └── emoji_like.py        # 表情回复动作实现
 ```
 
 ---
@@ -99,67 +107,30 @@ notice_injector/
 | `enable_debug` | `false` | 是否输出调试日志 |
 | `ignore_self_notice` | `true` | 是否忽略机器人自己触发的通知 |
 
----
 
-## 🛠️ TODO / 路线图
+## 🎯 戳一戳行为说明
 
-根据插件现状，以下功能计划按优先级开发：
+**架构设计**：
+- `send_group_poke`：群聊单用户连戳（`chat_type=GROUP`）
+- `send_private_poke`：私聊单用户连戳（`chat_type=PRIVATE`）
+- `send_group_poke_multiple`：群聊 AOE 戳（`chat_type=GROUP`）
+- 框架会根据环境自动过滤，不会出现群聊调用私聊 Action 的情况
 
-### 🔴 高优先级：提升 AI 感知与反馈质量
-- [ ] **结构化 Prompt 注入**：修改 `NoticeInjectorEventHandler.execute`，将拼接的 `text_description` 包装在标记块中（如 `<social_interaction>...</social_interaction>`），并在 `src/core/prompt` 中定义相应的处理逻辑，使 LLM 识别其为系统事件而非用户发言。
-- [ ] **上下文关联 Emoji 回复**：在插件内维护一个简易的 `MessageHistoryCache`（记录 `group_id` / `user_id` 对应的最后 3 条 `message_id`），当 AI 调用 `send_emoji_like` 但未提供 ID 时，自动回填最新的消息 ID。
-- [ ] **社交频率限制 (Rate Limiter)**：在 `actions/poke.py` 中引入 `src/kernel/storage` 存储戳人记录，针对同一 `user_id` 在 60s 内仅允许执行一次 `poke` 动作，防止 AI 幻觉导致的无限循环戳人。
-
-### 🟡 中优先级：扩展社交场景
-- [ ] **“运气王”语义化**：解析 `notice_type: lucky_king`，从 `extra` 中提取红包金额和运气王昵称，转化为 `[系统通知：用户A成为了运气王，抢到了XX元]` 注入对话。
-- [ ] **成员变更实时感知**：监听 `EventType` 中的群成员增加/减少事件，提取入群方式或退群原因，转化为语义描述注入，触发 LLM 生动的欢迎语或告别语。
-- [ ] **Action 级联封装**：扩展 `Action` 的 `execute` 方法，支持返回一个包含 `send_message` 指令的 Task，实现“戳一下并附带一句话”的原子操作。
-
-### 🔵 低优先级：工程化优化
-- [ ] **语义情绪映射表**：在 `config.py` 中定义 `EMOTION_MAP: dict[str, int]`，将 LLM 常用的情绪词（如 "like", "cry", "fire"）实时映射为标准的 QQ 表情 ID，简化 AI 的交互逻辑。
-- [ ] **互动热度统计 Service**：利用 `src/kernel/db` 记录各用户的互动频率（被戳/被赞次数），通过 `src/core/components/base/service.py` 暴露接口，供好感度或活跃度插件查询。
-
-| `trigger_chat` | `false` | 是否将通知注入对话流触发聊天（关闭可省 token） |
-| `enable_send_emoji_like` | `true` | 是否启用主动动作 `send_emoji_like` |
-| `emoji_like_allowed_ids` | `[...]` | `send_emoji_like` 白名单表情 ID（用于约束乱贴） |
-| `emoji_like_strict_mode` | `true` | 开启后不在白名单内的表情会回退默认值 |
-| `emoji_like_custom_rules` | `{}` | 自定义语义规则，格式 `{emoji_id: [关键词...]}`，用于补充/覆盖内置规则 |
-| `emoji_like_emotion_tag_map` | `{}` | 自定义标签映射，格式 `{标签: emoji_id}`，用于 `emotion_tags` 先验决策 |
-| `emoji_like_emotion_tag_priority` | `[...]` | 多标签冲突时的优先级（纯本地规则，零额外消耗） |
-| `max_poke_count` | `3` | 单次允许最大连戳次数（内部硬上限 10） |
-| `poke_interval_min_ms` | `100` | 连戳最小间隔（毫秒） |
-| `poke_interval_max_ms` | `200` | 连戳最大间隔（毫秒） |
-| `validate_target_before_poke` | `false` | 发送戳一戳前是否先校验目标 |
-| `validate_target_in_group` | `true` | 群聊场景是否执行目标校验 |
-| `validate_target_in_private` | `false` | 私聊场景是否执行目标校验（通常不推荐设为 `true`） |
-| `aoe_poke_max_targets` | `5` | AOE 戳一戳最大目标人数上限（内部硬上限 20） |
-| `validate_target_before_aoe_poke` | `true` | AOE 戳一戳前是否校验目标用户存在 |
-
-### `send_poke` 行为说明
-
-- 次数裁剪：
-    - 实际连戳次数会被限制到 `[1, min(max_poke_count, 10)]`
-    - 即使模型传入更大值也不会超过硬上限 10
-- 目标优先级：
-    - 用户：`target_user_id` > `user_id`
-    - 群：`target_group_id` > `group_id` > 当前上下文推断
-- 群/私聊安全：
-    - 群环境缺失 `group_id` 时不会降级为私聊，直接取消执行
+**通用规则**：
+- 次数裁剪：实际连戳次数限制在 `[1, min(max_poke_count, 10)]`
+- 目标优先级：`target_user_id` > `user_id`，`target_group_id` > `group_id` > 上下文推断
+- 群聊安全：群聊 Action 缺失 `group_id` 时直接取消，不会降级为私聊
 - 校验策略：
-    - 仅当 `validate_target_before_poke=true` 时才会进入校验流程
-    - 群聊校验：`validate_target_in_group=true` 时使用 `get_group_member_info`
-    - 私聊校验：`validate_target_in_private=true` 时使用 `get_stranger_info`
-    - 私聊默认 `validate_target_in_private=false`，且通常不推荐改为 `true`（会增加额外 API 调用）
+  - 群聊：`validate_target_before_poke=true` 且 `validate_target_in_group=true` 时使用 `get_group_member_info`
+  - 私聊：`validate_target_before_poke=true` 且 `validate_target_in_private=true` 时使用 `get_stranger_info`
+  - 私聊默认不校验（避免额外 API 调用）
 
-### `send_poke_multiple` 行为说明
-
-- 与 `send_poke` 为互斥关系，二选一使用：
-    - `send_poke`：单用户连戳多次
-    - `send_poke_multiple`：多用户各戳一次
+**AOE 戳一戳特性**：
+- 与单用户连戳互斥，二选一使用
 - 每人只戳一次，不支持连戳
-- 人数上限由 `max_targets` 控制（默认 5）
-- LLM 应从上下文判断"活跃用户"是谁，建议从最近消息中提取
-- 目标校验默认开启，会过滤无效用户
+- 人数上限由 `max_targets` 控制（默认 5，硬上限 10）
+- LLM 应从上下文判断"活跃用户"，建议从最近消息中提取
+- 目标校验默认开启，会过滤无效用户无效用户
 - AOE 戳一戳仅支持群聊
 
 ### `send_emoji_like` 行为说明

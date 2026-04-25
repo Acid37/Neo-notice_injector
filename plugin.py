@@ -12,7 +12,7 @@ from src.core.components.types import EventType
 from src.kernel.event import EventDecision
 
 from .config import NoticeInjectorConfig
-from .actions.poke import SendPokeAction, SendPokeMultipleAction
+from .actions.poke import SendGroupPokeAction, SendPrivatePokeAction, SendGroupPokeMultipleAction
 from .actions.emoji_like import SendEmojiLikeAction
 
 logger = get_logger("notice_injector")
@@ -122,7 +122,7 @@ class NoticeInjectorEventHandler(BaseEventHandler):
         if config.plugin.ignore_self_notice:
             is_self = extra.get("self_sent", False)
             if not is_self:
-                is_self = await self._is_self_sent_poke(extra, msg_info)
+                is_self = await self._is_self_sent_notice(extra, msg_info)
                 
             if is_self:
                 if config.plugin.enable_debug:
@@ -152,8 +152,16 @@ class NoticeInjectorEventHandler(BaseEventHandler):
         
         return EventDecision.SUCCESS, params
 
-    async def _is_self_sent_poke(self, extra: dict, msg_info: dict) -> bool:
-        """检查是否是机器人自己发送的动作"""
+    async def _is_self_sent_notice(self, extra: dict, msg_info: dict) -> bool:
+        """检查是否是机器人自己发送的通知动作
+        
+        Args:
+            extra: 通知消息的额外信息字典
+            msg_info: 消息信息字典
+            
+        Returns:
+            bool: 如果是机器人自己发送的动作返回 True，否则返回 False
+        """
         # 尝试获取操作者ID
         # 注意：adapter生成的msg_info中，user_id通常位于from_user字段，而不是extra
         operator_id = extra.get("operator_id") or extra.get("user_id")
@@ -197,21 +205,20 @@ class NoticeInjectorPlugin(BasePlugin):
     plugin_description = "将 QQ 通知消息（如戳一戳、表情回复等）转换为标准文本消息。"
     configs = [NoticeInjectorConfig]
 
-    async def on_load(self) -> bool:
+    async def on_plugin_loaded(self) -> None:
         """插件加载时的处理"""
         logger.info("NoticeInjector 插件加载成功")
-        return True
 
-    async def on_unload(self) -> bool:
+    async def on_plugin_unloaded(self) -> None:
         """插件卸载时的处理"""
         logger.info("NoticeInjector 插件卸载成功")
-        return True
 
     def get_components(self) -> list[type]:
         """获取插件内所有组件类"""
         return [
-            SendPokeAction,
-            SendPokeMultipleAction,
+            SendGroupPokeAction,
+            SendPrivatePokeAction,
+            SendGroupPokeMultipleAction,
             SendEmojiLikeAction,
             NoticeInjectorEventHandler,
         ]

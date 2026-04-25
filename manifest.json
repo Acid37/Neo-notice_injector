@@ -10,13 +10,19 @@
   "include": [
     {
       "component_type": "action",
-      "component_name": "send_poke",
+      "component_name": "send_group_poke",
       "dependencies": [],
       "enabled": true
     },
     {
       "component_type": "action",
-      "component_name": "send_poke_multiple",
+      "component_name": "send_private_poke",
+      "dependencies": [],
+      "enabled": true
+    },
+    {
+      "component_type": "action",
+      "component_name": "send_group_poke_multiple",
       "dependencies": [],
       "enabled": true
     },

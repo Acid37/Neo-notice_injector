@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from src.core.components.base import BaseAction
 from src.app.plugin_system.api.log_api import get_logger
-from src.app.plugin_system.api import adapter_api
+from src.core.managers.adapter_manager import get_adapter_manager
 
 logger = get_logger("notice_injector")
 
@@ -494,6 +494,10 @@ class SendEmojiLikeAction(BaseAction):
             plugin_obj = getattr(self, "plugin", None)
             config_obj = getattr(plugin_obj, "config", None)
             plugin_config = getattr(config_obj, "plugin", None)
+            
+            if plugin_config is None:
+                raise AttributeError("配置对象未加载")
+                
             config_default = getattr(plugin_config, "default_emoji_id", "126") or "126"
             enable_send_emoji_like = bool(
                 getattr(plugin_config, "enable_send_emoji_like", True)
@@ -509,7 +513,8 @@ class SendEmojiLikeAction(BaseAction):
                 "emoji_like_emotion_tag_priority",
                 list(_DEFAULT_EMOTION_TAG_PRIORITY),
             )
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.warning(f"读取配置失败，使用默认值: {e}")
             config_default = "126"
             enable_send_emoji_like = True
             strict_mode = True
@@ -575,9 +580,12 @@ class SendEmojiLikeAction(BaseAction):
         adapter_sign = _DEFAULT_ADAPTER_SIGN
 
         try:
+            # 获取适配器管理器
+            adapter_manager = get_adapter_manager()
+            
             # 发送表情回复命令到 napcat 适配器
             # 发送 set_msg_emoji_like 命令 (OneBot 11 标准)
-            result = await adapter_api.send_adapter_command(
+            result = await adapter_manager.send_adapter_command(
                 adapter_sign=adapter_sign,
                 command_name="set_msg_emoji_like",
                 command_data=command_data,

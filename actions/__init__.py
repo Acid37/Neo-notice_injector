@@ -3,7 +3,12 @@
 提供发送戳一戳和表情回复的主动交互功能。
 """
 
-from .poke import SendPokeAction, SendPokeMultipleAction
+from .poke import SendGroupPokeAction, SendPrivatePokeAction, SendGroupPokeMultipleAction
 from .emoji_like import SendEmojiLikeAction
 
-__all__ = ["SendPokeAction", "SendPokeMultipleAction", "SendEmojiLikeAction"]
+__all__ = [
+    "SendGroupPokeAction",
+    "SendPrivatePokeAction", 
+    "SendGroupPokeMultipleAction",
+    "SendEmojiLikeAction"
+]
