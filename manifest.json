@@ -1,7 +1,7 @@
 {
   "name": "notice_injector",
   "version": "1.1.2",
-  "description": "处理QQ通知消息（如戳一戳、表情回复等），并支持主动发送QQ交互消息",
+  "description": "处理QQ通知消息（如戳一戳、禁言等），并支持主动发送戳一戳交互",
   "author": "可acid,绝世猫猫满月月喵（彩蛋喵）",
   "dependencies": {
     "plugins": [],
@@ -23,12 +23,6 @@
     {
       "component_type": "action",
       "component_name": "send_group_poke_multiple",
-      "dependencies": [],
-      "enabled": true
-    },
-    {
-      "component_type": "action",
-      "component_name": "send_emoji_like",
       "dependencies": [],
       "enabled": true
     }

@@ -13,8 +13,7 @@
 Notice Injector 不一样。它会：
 
 - 把"戳一戳"变成机器人能看懂的消息："用户A戳了戳你"
-- 把"表情回复"变成对话的一部分："用户B给你的消息点了赞"
-- 还能让机器人主动去戳一戳、点个赞，像真人一样互动
+- 还能让机器人主动去戳一戳，像真人一样互动
 
 这不是简单的消息转发，这是**通知语义化**驱动的交互桥梁。
 
@@ -22,14 +21,12 @@ Notice Injector 不一样。它会：
 
 #### 接收通知，转化理解
 - **戳一戳通知** — 有人戳机器人时，转化为文本消息注入对话
-- **表情回复通知** — 有人给机器人消息点赞时，同步到对话流
 - **禁言通知** — 有人被禁言/解除禁言时，记录到对话历史
 - **文件上传通知** — 群里有人上传文件时，通知机器人处理
 
 #### 主动交互，拉近距离
 - **发送戳一戳** — 机器人可以主动戳一戳用户引起注意
 - **AOE 戳一戳** — 机器人可以同时戳多个活跃用户（每人一次）
-- **发送表情回复** — 机器人可以给用户消息点赞、表达情绪（仅群聊）
 - **全场景支持** — 所有功能同时支持私聊和群聊
 
 ---
@@ -45,7 +42,6 @@ Notice Injector 通过框架的原生 Action 系统提供交互能力：
 | `send_group_poke`          | 群聊单用户连戳多次        | 仅群聊   | `user_id`(必选), `group_id`(可选), `poke_count`(可选), `target_user_id`(可选), `target_group_id`(可选) |
 | `send_private_poke`        | 私聊单用户连戳多次        | 仅私聊   | `user_id`(必选), `poke_count`(可选), `target_user_id`(可选) |
 | `send_group_poke_multiple` | 群聊多用户各戳一次（AOE） | 仅群聊   | `user_ids`(必选), `group_id`(可选), `max_targets`(可选，默认5), `validate_targets`(可选，默认true) |
-| `send_emoji_like`          | 发送表情回复              | 仅群聊   | `message_id` (必选), `semantic_hint` (必选), `emotion_tags` (可选), `emoji_id` (兼容参数，执行时忽略) |
 
 **架构优化说明**：
 - 戳一戳功能已拆分为群聊和私聊独立 Action，框架会根据 `chat_type` 自动过滤
@@ -60,14 +56,12 @@ graph TD
     A[QQ通知事件] --> B[NoticeHandler]
     B --> C{类型判断}
     C -->|戳一戳| D[转换为文本消息]
-    C -->|表情回复| E[提取表情信息]
-    C -->|禁言| F[记录禁言状态]
-    C -->|文件上传| G[记录文件信息]
-    D --> H[注入对话流]
-    E --> H
-    F --> H
-    G --> H
-    H --> I[机器人处理对话]
+    C -->|禁言| E[记录禁言状态]
+    C -->|文件上传| F[记录文件信息]
+    D --> G[注入对话流]
+    E --> G
+    F --> G
+    G --> H[机器人处理对话]
 ```
 
 ---
@@ -83,8 +77,7 @@ notice_injector/
 ├── README.md                # 插件文档
 └── actions/
     ├── __init__.py          # Actions 模块导出
-    ├── poke.py              # 戳一戳动作实现（群聊/私聊/AOE）
-    └── emoji_like.py        # 表情回复动作实现
+    └── poke.py              # 戳一戳动作实现（群聊/私聊/AOE）
 ```
 
 ---
@@ -101,7 +94,6 @@ notice_injector/
 |---|---:|---|
 | `enabled` | `true` | 插件总开关 |
 | `enable_poke` | `true` | 是否处理戳一戳通知 |
-| `enable_emoji_like` | `true` | 是否处理表情回复通知 |
 | `enable_ban` | `true` | 是否处理禁言通知 |
 | `enable_group_upload` | `true` | 是否处理文件上传通知 |
 | `enable_debug` | `false` | 是否输出调试日志 |
@@ -133,27 +125,6 @@ notice_injector/
 - 目标校验默认开启，会过滤无效用户无效用户
 - AOE 戳一戳仅支持群聊
 
-### `send_emoji_like` 行为说明
-
-- 回复意图优先（强制）：
-    - action 会忽略显式 `emoji_id`，仅根据 `semantic_hint` 做语义选取
-    - 这样可避免“对方说难过 -> 机器人也发哭泣”这类情绪复读
-- 标签先验（参考 emoji_sender）：
-    - 若传入 `emotion_tags`，会先按标签映射选择表情，再回退到 `semantic_hint` 规则
-    - 默认支持标签：开心/难过/生气/惊讶/害羞/尴尬/无语/委屈/嘲讽/疑惑/赞同/否定/兴奋/疲惫/害怕/厌恶/紧张/冷漠
-- 冲突决策（零额外消耗）：
-    - 当同时出现多个标签时，按 `emoji_like_emotion_tag_priority` 选择最高优先级标签
-    - 该步骤仅本地排序，不触发任何额外模型调用
-- `semantic_hint` 为必填：
-    - 未提供时将拒绝执行，避免脱离语义上下文乱贴
-- 语义未命中时：
-    - 回退到 `default_emoji_id`（默认 `126` 点赞）
-- 继续加入语义规则：
-    - 在 `emoji_like_custom_rules` 中按 `{emoji_id: [关键词...]}` 添加
-    - 自定义规则优先于内置规则，且会与内置关键词自动合并
-- 推荐调用方式：
-    - 只需填写 `semantic_hint`（例如：感谢/恭喜/安慰/加油/确认）
-
 ### 推荐配置（低延迟+稳健）
 
 ```toml
@@ -163,7 +134,6 @@ enabled = true
 
 # 通知处理类型开关
 enable_poke = true
-enable_emoji_like = true
 enable_ban = true
 enable_group_upload = true
 
