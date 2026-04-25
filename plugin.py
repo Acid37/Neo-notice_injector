@@ -12,8 +12,7 @@ from src.core.components.types import EventType
 from src.kernel.event import EventDecision
 
 from .config import NoticeInjectorConfig
-from .actions.poke import SendPokeAction, SendPokeMultipleAction
-from .actions.emoji_like import SendEmojiLikeAction
+from .actions.poke import SendGroupPokeAction, SendPrivatePokeAction, SendGroupPokeMultipleAction
 
 logger = get_logger("notice_injector")
 
@@ -25,7 +24,7 @@ class NoticeInjectorEventHandler(BaseEventHandler):
     """Notice 注入事件处理器"""
 
     handler_name = "notice_injector"
-    handler_description = "将 QQ 通知消息（如戳一戳、表情回复等）转换为标准文本消息。"
+    handler_description = "将 QQ 通知消息（如戳一戳、禁言等）转换为标准文本消息。"
 
     # 订阅的事件类型
     init_subscribe = [EventType.ON_RECEIVED_OTHER_MESSAGE]
@@ -66,37 +65,21 @@ class NoticeInjectorEventHandler(BaseEventHandler):
         notice_type = extra.get("notice_type", "")
         text_description = extra.get("text_description", "")
 
-        # 对 group_msg_emoji_like 类型尝试提取更丰富的描述
-        if notice_type == "group_msg_emoji_like" and not text_description:
-            # 尝试从 emoji_list 中构建描述
-            emoji_list = extra.get("emoji_list", [])
-            if emoji_list:
-                emoji_id = str(emoji_list[0].get("emoji_id", "")) if emoji_list else ""
-                count = emoji_list[0].get("count", 1) if emoji_list else 1
-                from_user = msg_info.get("from_user", {})
-                sender_nick = from_user.get("nickname", "") or from_user.get("user_id", "某人")
-                msg_id = msg_info.get("message_id", "")
-                text_description = (
-                    f"{sender_nick} 对消息{(' ' + str(msg_id)) if msg_id else ''}"
-                    f" 发送了表情回复（表情ID: {emoji_id}，数量: {count}）"
-                )
-                extra["text_description"] = text_description
-                if config.plugin.enable_debug:
-                    logger.debug(f"构建表情回复描述: {text_description}")
-
         # 如果没有 text_description，无法处理，直接返回
         if not text_description:
             return EventDecision.SUCCESS, params
 
-        # 3. 按类型检查功能开关
+        # 3. 按类型检查功能开关（分层控制：先检查总开关 trigger_chat，再检查分开关 enable_*）
+        # 第一层：检查是否启用了聊天触发（总开关）
+        if not config.plugin.trigger_chat:
+            if config.plugin.enable_debug:
+                logger.debug(f"Chat Trigger 未启用（总开关关闭），忽略所有通知：{text_description}")
+            return EventDecision.SUCCESS, params
+        
+        # 第二层：检查具体通知类型的分开关
         if notice_type == "poke" and not config.plugin.enable_poke:
             if config.plugin.enable_debug:
                 logger.debug(f"通过配置忽略戳一戳通知: {text_description}")
-            return EventDecision.SUCCESS, params
-            
-        elif notice_type == "group_msg_emoji_like" and not config.plugin.enable_emoji_like:
-            if config.plugin.enable_debug:
-                logger.debug(f"通过配置忽略表情回复通知: {text_description}")
             return EventDecision.SUCCESS, params
             
         elif notice_type == "group_ban" and not config.plugin.enable_ban:
@@ -115,19 +98,13 @@ class NoticeInjectorEventHandler(BaseEventHandler):
         if config.plugin.ignore_self_notice:
             is_self = extra.get("self_sent", False)
             if not is_self:
-                is_self = await self._is_self_sent_poke(extra, msg_info)
+                is_self = await self._is_self_sent_notice(extra, msg_info)
                 
             if is_self:
                 if config.plugin.enable_debug:
                     logger.debug(f"检测到自己发送的动作，已忽略: {text_description}")
                 return EventDecision.SUCCESS, params
             
-        # 5. 检查是否启用了聊天触发
-        # 如果未启用 trigger_chat，则不注入消息，从而避免消耗 Token 和污染上下文
-        if not config.plugin.trigger_chat:
-            if config.plugin.enable_debug:
-                logger.debug(f"Chat Trigger 未启用，忽略通知: {text_description}")
-            return EventDecision.SUCCESS, params
 
         # 根据 notice 类型处理并记录日志
         if config.plugin.enable_debug:
@@ -151,8 +128,16 @@ class NoticeInjectorEventHandler(BaseEventHandler):
         
         return EventDecision.SUCCESS, params
 
-    async def _is_self_sent_poke(self, extra: dict, msg_info: dict) -> bool:
-        """检查是否是机器人自己发送的动作"""
+    async def _is_self_sent_notice(self, extra: dict, msg_info: dict) -> bool:
+        """检查是否是机器人自己发送的通知动作
+        
+        Args:
+            extra: 通知消息的额外信息字典
+            msg_info: 消息信息字典
+            
+        Returns:
+            bool: 如果是机器人自己发送的动作返回 True，否则返回 False
+        """
         # 尝试获取操作者ID
         # 注意：adapter生成的msg_info中，user_id通常位于from_user字段，而不是extra
         operator_id = extra.get("operator_id") or extra.get("user_id")
@@ -193,24 +178,22 @@ class NoticeInjectorPlugin(BasePlugin):
     plugin_name = "notice_injector"
     plugin_version = "1.1.2"
     plugin_author = "NeoFox"
-    plugin_description = "将 QQ 通知消息（如戳一戳、表情回复等）转换为标准文本消息。"
+    plugin_description = "将 QQ 通知消息（如戳一戳、禁言等）转换为标准文本消息。"
     configs = [NoticeInjectorConfig]
 
-    async def on_load(self) -> bool:
+    async def on_plugin_loaded(self) -> None:
         """插件加载时的处理"""
         logger.info("NoticeInjector 插件加载成功")
-        return True
 
-    async def on_unload(self) -> bool:
+    async def on_plugin_unloaded(self) -> None:
         """插件卸载时的处理"""
         logger.info("NoticeInjector 插件卸载成功")
-        return True
 
     def get_components(self) -> list[type]:
         """获取插件内所有组件类"""
         return [
-            SendPokeAction,
-            SendPokeMultipleAction,
-            SendEmojiLikeAction,
+            SendGroupPokeAction,
+            SendPrivatePokeAction,
+            SendGroupPokeMultipleAction,
             NoticeInjectorEventHandler,
         ]
