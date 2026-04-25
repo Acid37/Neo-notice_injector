@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from src.core.components.base import BaseAction
+from src.core.components.types import ChatType
 from src.app.plugin_system.api.log_api import get_logger
 from src.core.managers.adapter_manager import get_adapter_manager
 
@@ -442,6 +443,7 @@ class SendEmojiLikeAction(BaseAction):
     """发送表情回复动作给消息"""
 
     action_name = "send_emoji_like"
+    chat_type = ChatType.GROUP
     action_description = (
         "给指定消息发送表情回复（QQ 表情点赞/回应）。"
         "参数说明："
