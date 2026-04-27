@@ -75,7 +75,13 @@ class NoticeInjectorEventHandler(BaseEventHandler):
             if config.plugin.enable_debug:
                 logger.debug(f"Chat Trigger 未启用（总开关关闭），忽略所有通知：{text_description}")
             return EventDecision.SUCCESS, params
-        
+
+        # 不处理贴表情（emoji_like）类型的 notice
+        if notice_type == "emoji_like":
+            if config.plugin.enable_debug:
+                logger.debug(f"忽略贴表情通知: {text_description}")
+            return EventDecision.SUCCESS, params
+
         # 第二层：检查具体通知类型的分开关
         if notice_type == "poke" and not config.plugin.enable_poke:
             if config.plugin.enable_debug:
