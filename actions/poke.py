@@ -195,6 +195,7 @@ class SendGroupPokeAction(BaseAction):
                     },
                     timeout=10.0
                 )
+                logger.info(f"群戳一戳 NapCat 原始响应: 第{i + 1}/{actual_count}次, result={result}")
                 if result.get("status") != "ok":
                     error_msg = result.get("message", "未知错误")
                     logger.error(f"发送戳一戳失败: 第{i + 1}/{actual_count}次, 错误: {error_msg}")
@@ -321,6 +322,7 @@ class SendPrivatePokeAction(BaseAction):
                     command_data={"user_id": effective_user_id},
                     timeout=10.0
                 )
+                logger.info(f"私戳一戳 NapCat 原始响应: 第{i + 1}/{actual_count}次, result={result}")
                 if result.get("status") != "ok":
                     error_msg = result.get("message", "未知错误")
                     logger.error(f"发送戳一戳失败: 第{i + 1}/{actual_count}次, 错误: {error_msg}")
@@ -495,6 +497,7 @@ class SendGroupPokeMultipleAction(BaseAction):
                     timeout=10.0,
                 )
 
+                logger.info(f"AOE戳一戳 NapCat 原始响应: uid={uid}, result={result}")
                 if result.get("status") == "ok":
                     success_users.append(uid)
                 else:
