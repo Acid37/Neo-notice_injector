@@ -30,7 +30,7 @@ def _normalize_numeric_id(value: object) -> str | None:
 
 async def _resolve_group_id_from_stream(chat_stream: object) -> str | None:
     """从流上下文或流记录中解析群ID（数字）。"""
-    # 1) 优先从当前消息 extra 中获取
+    # 1) 优先从当前消息 extra 中获取（零 DB 查询）
     context = getattr(chat_stream, "context", None)
     if context:
         current_message = getattr(context, "current_message", None)
@@ -40,21 +40,20 @@ async def _resolve_group_id_from_stream(chat_stream: object) -> str | None:
             if group_id:
                 return group_id
 
-    # 2) 回退：按 stream_id 查询 chat_streams 表中的 group_id
+    # 2) 回退：通过 StreamManager.get_stream_info 查询（带 alru_cache，同 stream_id 只查一次 DB）
     stream_id = getattr(chat_stream, "stream_id", "")
     if not stream_id:
         return None
 
     try:
-        from src.core.models.sql_alchemy import ChatStreams
-        from src.kernel.db import QueryBuilder
+        from src.core.managers.stream_manager import get_stream_manager
 
-        record = await QueryBuilder(ChatStreams).filter(stream_id=stream_id).first()
-        if not record:
-            return None
-        return _normalize_numeric_id(getattr(record, "group_id", None))
+        stream_info = await get_stream_manager().get_stream_info(stream_id)
+        if stream_info:
+            return _normalize_numeric_id(stream_info.get("group_id"))
+        return None
     except Exception as e:
-        logger.debug(f"通过 stream_id 回查 group_id 失败: {e}")
+        logger.debug(f"通过 stream_info 回查 group_id 失败: {e}")
         return None
 
 
@@ -69,8 +68,8 @@ class SendGroupPokeAction(BaseAction):
     action_description = (
         "在群聊中向指定用户发送戳一戳动作（仅群聊环境可用）。"
         "支持通过 poke_count 指定连续戳一戳次数；"
-        "支持通过 target_user_id / target_group_id 显式指定目标（可不等于当前回复对象）；"
-        "注意：group_id 必须是群号（数字ID），不能传群名。"
+        "支持通过 target_user_id 显式指定目标（可不等于当前回复对象）；"
+        "群号会从当前会话上下文自动解析，无需传入。"
         "请结合上下文与提示词决定次数。"
         "插件默认最大次数为3，硬上限为10，超出会自动按上限截断。"
     )
@@ -79,25 +78,21 @@ class SendGroupPokeAction(BaseAction):
     async def execute(
         self,
         user_id: str,
-        group_id: str | None = None,
         poke_count: int = 1,
         target_user_id: str | None = None,
-        target_group_id: str | None = None,
         **kwargs,
     ) -> tuple[bool, str]:
         """执行群聊戳一戳动作
 
         Args:
             user_id: 要戳的用户ID
-            group_id: 可选，群ID（会从上下文自动解析）
             poke_count: 连续戳一戳次数（默认1，最大10）
             target_user_id: 可选，显式目标用户ID
-            target_group_id: 可选，显式目标群ID
             **kwargs: 上下文参数
         """
         try:
             from src.core.managers.adapter_manager import get_adapter_manager
-            
+
             adapter_manager = get_adapter_manager()
             chat_stream = getattr(self, "chat_stream", None)
 
@@ -128,7 +123,7 @@ class SendGroupPokeAction(BaseAction):
             validate_target_before_poke = False
             validate_target_in_group = True
             adapter_sign = _DEFAULT_ADAPTER_SIGN
-            
+
             if plugin_config is not None:
                 try:
                     interval_min_ms = int(getattr(plugin_config, "poke_interval_min_ms", 100) or 0)
@@ -152,20 +147,14 @@ class SendGroupPokeAction(BaseAction):
             if not effective_user_id:
                 return False, "目标用户ID为空，操作取消"
 
-            # 确定群ID（优先显式参数，然后从上下文解析）
-            raw_group_id = target_group_id if target_group_id is not None else group_id
-            effective_group_id = _normalize_numeric_id(raw_group_id)
-            
-            if not effective_group_id and raw_group_id is not None:
-                logger.warning(f"收到无效 group_id（非数字），将尝试从上下文回退解析: {raw_group_id}")
-            
-            if not effective_group_id and chat_stream:
-                effective_group_id = await _resolve_group_id_from_stream(chat_stream)
+            # 从上下文解析群ID（不信任 LLM 传入的值）
+            effective_group_id = await _resolve_group_id_from_stream(chat_stream) if chat_stream else None
 
             # 群聊 Action 必须有 group_id
             if not effective_group_id:
-                logger.error("群聊戳一戳缺失 group_id，操作取消")
-                return False, "无法获取群号，操作取消"
+                logger.error(f"群聊戳一戳缺失 group_id: stream_id={getattr(chat_stream, 'stream_id', None)}, "
+                             f"current_message={bool(getattr(getattr(chat_stream, 'context', None), 'current_message', None))}")
+                return False, "无法获取群号，该会话可能缺少群信息，请尝试重新触发对话后再戳"
 
             # 可选目标校验
             if validate_target_before_poke and validate_target_in_group:
@@ -195,10 +184,11 @@ class SendGroupPokeAction(BaseAction):
                     },
                     timeout=10.0
                 )
+                logger.debug(f"群戳一戳 NapCat 原始响应: 第{i + 1}/{actual_count}次, result={result}")
                 if result.get("status") != "ok":
                     error_msg = result.get("message", "未知错误")
                     logger.error(f"发送戳一戳失败: 第{i + 1}/{actual_count}次, 错误: {error_msg}")
-                    return False, f"发送戳一戳失败（第{i + 1}/{actual_count}次）: {error_msg}"
+                    return False, f"发送戳一戳失败（第{i + 1}/{actual_count}次）: {error_msg}，请检查 NapCat 是否正常运行且 Packet 模式可用"
 
                 if i < actual_count - 1:
                     interval_ms = random.randint(interval_min_ms, interval_max_ms)
@@ -246,7 +236,7 @@ class SendPrivatePokeAction(BaseAction):
         """
         try:
             from src.core.managers.adapter_manager import get_adapter_manager
-            
+
             adapter_manager = get_adapter_manager()
 
             # 读取配置
@@ -276,7 +266,7 @@ class SendPrivatePokeAction(BaseAction):
             validate_target_before_poke = False
             validate_target_in_private = False
             adapter_sign = _DEFAULT_ADAPTER_SIGN
-            
+
             if plugin_config is not None:
                 try:
                     interval_min_ms = int(getattr(plugin_config, "poke_interval_min_ms", 100) or 0)
@@ -321,10 +311,11 @@ class SendPrivatePokeAction(BaseAction):
                     command_data={"user_id": effective_user_id},
                     timeout=10.0
                 )
+                logger.debug(f"私戳一戳 NapCat 原始响应: 第{i + 1}/{actual_count}次, result={result}")
                 if result.get("status") != "ok":
                     error_msg = result.get("message", "未知错误")
                     logger.error(f"发送戳一戳失败: 第{i + 1}/{actual_count}次, 错误: {error_msg}")
-                    return False, f"发送戳一戳失败（第{i + 1}/{actual_count}次）: {error_msg}"
+                    return False, f"发送戳一戳失败（第{i + 1}/{actual_count}次）: {error_msg}，请检查 NapCat 是否正常运行且 Packet 模式可用"
 
                 if i < actual_count - 1:
                     interval_ms = random.randint(interval_min_ms, interval_max_ms)
@@ -353,9 +344,9 @@ class SendGroupPokeMultipleAction(BaseAction):
         "- send_group_poke_multiple：多用户各戳一次"
         "参数说明："
         "- user_ids: 目标用户ID列表（必填）。建议从上下文最近有互动的用户中选择。"
-        "- group_id: 群号（可选，会从上下文自动解析），必须是数字ID，不能传群名。"
         "- max_targets: 最大目标人数上限，默认5，最大10。"
         "- validate_targets: 是否校验目标用户存在，默认true。"
+        "群号会从当前会话上下文自动解析，无需传入。"
         "注意：每人只戳一次，不支持连戳。"
     )
     chat_type = ChatType.GROUP
@@ -363,7 +354,6 @@ class SendGroupPokeMultipleAction(BaseAction):
     async def execute(
         self,
         user_ids: list[str],
-        group_id: str | None = None,
         max_targets: int | None = None,
         validate_targets: bool | None = None,
     ) -> tuple[bool, str]:
@@ -371,7 +361,6 @@ class SendGroupPokeMultipleAction(BaseAction):
 
         Args:
             user_ids: 目标用户ID列表
-            group_id: 群号（可选，会从上下文回退解析）
             max_targets: 最大目标人数上限（默认从配置读取）
             validate_targets: 是否校验目标用户存在（默认从配置读取）
         """
@@ -408,19 +397,14 @@ class SendGroupPokeMultipleAction(BaseAction):
                 logger.warning(f"AOE戳一戳目标人数 {len(user_ids)} 超过上限 {effective_max}，已截断")
                 user_ids = user_ids[:effective_max]
 
-            # 归一化 group_id（优先使用传入值）
-            normalized_group_id = _normalize_numeric_id(group_id)
-            if not normalized_group_id and group_id is not None:
-                logger.warning(f"收到无效 group_id（非数字），将尝试从上下文回退解析: {group_id}")
-
-            # 从上下文中回退解析 group_id
-            if not normalized_group_id:
-                chat_stream = getattr(self, "chat_stream", None)
-                if chat_stream:
-                    normalized_group_id = await _resolve_group_id_from_stream(chat_stream)
+            # 从上下文解析群ID（不信任 LLM 传入的值）
+            chat_stream = getattr(self, "chat_stream", None)
+            normalized_group_id = await _resolve_group_id_from_stream(chat_stream) if chat_stream else None
 
             if not normalized_group_id:
-                return False, "无法获取群号，group_id 为空且无法从上下文解析"
+                logger.error(f"AOE戳一戳缺失 group_id: stream_id={getattr(chat_stream, 'stream_id', None)}, "
+                             f"current_message={bool(getattr(getattr(chat_stream, 'context', None), 'current_message', None))}")
+                return False, "无法获取群号，该会话可能缺少群信息，请尝试重新触发对话后再戳"
 
             # 读取动作参数配置
             adapter_sign = _DEFAULT_ADAPTER_SIGN
@@ -495,6 +479,7 @@ class SendGroupPokeMultipleAction(BaseAction):
                     timeout=10.0,
                 )
 
+                logger.debug(f"AOE戳一戳 NapCat 原始响应: uid={uid}, result={result}")
                 if result.get("status") == "ok":
                     success_users.append(uid)
                 else:
